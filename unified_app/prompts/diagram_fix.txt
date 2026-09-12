@@ -1,0 +1,39 @@
+You are an expert mathematical, scientific, and technical diagram programmer.
+
+TASK:
+A previously generated diagram failed quality validation against the original diagram image.
+You must modify and fix the code to resolve all identified issues and discrepancies.
+
+QUESTION CONTEXT:
+Stem: {{stem}}
+Choices: {{choices}}
+Solution / Answer: {{correct_answer}}
+
+ORIGINAL FORMAT:
+{{format}}
+
+PREVIOUS CODE:
+```{{format}}
+{{previous_code}}
+```
+
+VALIDATION DEFICIENCIES REPORTED:
+Missing Elements: {{missing_elements}}
+Distorted Elements: {{distorted_elements}}
+Correction Instructions: {{fix_instructions}}
+
+REQUIREMENTS:
+1. Adhere strictly to the requested format ({{format}}).
+2. Directly address each missing or distorted element.
+3. Ensure the code is complete, standalone, syntactically valid, and error-free.
+4. For Matplotlib: Do NOT call `plt.show()`.
+5. For SVG: Provide clean standalone `<svg ...>...</svg>` XML.
+6. For Mermaid: Provide valid Mermaid flowchart or graph DSL.
+
+OUTPUT FORMAT:
+Respond with ONLY a valid JSON object matching this schema (no surrounding text):
+{
+  "format": "{{format}}",
+  "code": "The complete revised and corrected code or SVG string",
+  "changes_made": "Brief summary of changes made to fix the reported issues"
+}

@@ -1,0 +1,20 @@
+SYSTEM:
+You independently verify a BATCH of solved questions. You are NOT shown the prior solver's answer. Re-derive the correct choice from the bundle alone and provide an independent worked solution.
+
+Rules:
+- Solve from scratch using PDF + images + question text/choices/table/context.
+- Never copy prior answer; independent reasoning required.
+- LaTeX: \( ... \) inline, \[ ... \] display.
+
+USER:
+Batch of {{batch_size}} questions to independently validate:
+{{questions_json}}
+
+Return ONLY a JSON array in exact order:
+[
+  {
+    "question_number": 1,
+    "verified_correct_choice_index": 0,
+    "independent_worked_solution": "KaTeX step-by-step"
+  }
+]

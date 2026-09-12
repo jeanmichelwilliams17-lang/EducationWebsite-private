@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Extraction Chatter — Multi-Account AI Question Extraction & KaTeX Normalization</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <header class="navbar">
+      <div class="logo-area">
+        <div class="logo-badge">PIPELINE v2.0</div>
+        <h1>Extraction Chatter</h1>
+        <span class="version-tag">Multi-Account Balanced AI Engine</span>
+      </div>
+      <div class="nav-actions">
+        <button id="btnProfiles" class="btn btn-secondary">👥 Google Accounts</button>
+        <button id="btnRecheck" class="btn btn-warning">⚡ Run AI Recheck</button>
+        <button id="btnExport" class="btn btn-secondary">📥 Export JSON</button>
+        <button id="btnExportFinal" class="btn btn-primary" style="display:none; font-size:0.82rem;">📦 Export Final</button>
+        <button id="btnClearAll" class="btn btn-danger" style="font-size:0.82rem;padding:0.4rem 0.8rem;">🗑️ Clear Data</button>
+        <button id="btnRefresh" class="btn btn-icon">🔄 Refresh</button>
+      </div>
+    </header>
+
+    <section id="jobPanel" class="job-panel" style="display:none">
+      <div class="job-panel-header">
+        <div class="job-panel-top">
+          <div style="display:flex; align-items:center; gap:0.6rem;">
+            <span class="pulse-indicator"></span>
+            <span id="jobPanelFile" class="job-panel-file">📄 —</span>
+            <span id="jobPanelStageBadge" class="stage-badge">Extracting</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:0.75rem;">
+            <span id="jobPanelTimer" class="job-panel-timer">⏱ 0s</span>
+            <button id="btnJobPanelCollapse" class="btn btn-icon" style="font-size:0.75rem;padding:0.2rem 0.5rem;">▾ collapse</button>
+          </div>
+        </div>
+
+        <!-- 8-Stage Workflow Stepper from workflowintext.txt -->
+        <div id="jobPanelStepper" class="job-stepper">
+          <span class="step-dot" data-step="extract" id="jpStepExtract">● 1. Extract</span>
+          <span class="step-conn">──</span>
+          <span class="step-dot" data-step="diagrams" id="jpStepDiagrams">○ 2. Diagrams</span>
+          <span class="step-conn">──</span>
+          <span class="step-dot" data-step="reword" id="jpStepReword">○ 3. Reword</span>
+          <span class="step-conn">──</span>
+          <span class="step-dot" data-step="solve" id="jpStepSolve">○ 4. Solve</span>
+          <span class="step-conn">──</span>
+          <span class="step-dot" data-step="validate" id="jpStepValidate">○ 5. Validate</span>
+          <span class="step-conn">──</span>
+          <span class="step-dot" data-step="fixing" id="jpStepFixing">○ 6. Fix & Recheck</span>
+          <span class="step-conn">──</span>
+          <span class="step-dot" data-step="regen_diagrams" id="jpStepRegenDiagrams">○ 7. Regen Diagrams</span>
+          <span class="step-conn">──</span>
+          <span class="step-dot" data-step="completed" id="jpStepCompleted">○ 8. Final</span>
+          <span id="jobPanelStatusLabel" style="margin-left:auto;font-size:0.75rem;color:#9ca3af;"></span>
+        </div>
+
+        <!-- Single Unified Progress Bar (Clamped to max 100%) -->
+        <div class="progress-track" style="margin:0.5rem 0;">
+          <div id="jobPanelProgress" class="progress-fill" style="width:0%"></div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+          <div id="jobPanelProgressText" style="font-size:0.78rem;color:#cbd5e1;">0% · Initializing...</div>
+          <div id="jobPanelStatPct" style="font-size:0.85rem; font-weight:700; color:#10b981;">0%</div>
+        </div>
+
+        <!-- Account Pool Status -->
+        <div class="account-strip-container">
+          <span class="strip-label">Account Pool Status:</span>
+          <div id="jobPanelAccounts" class="account-strip-grid"></div>
+        </div>
+
+        <!-- Live Pipeline Event Ticker -->
+        <div class="telemetry-ticker">
+          <span class="ticker-icon">📡</span>
+          <span id="jobPanelTicker" class="ticker-text">Pipeline ready</span>
+        </div>
+      </div>
+      <div id="jobPanelBody" class="job-panel-body"></div>
+      <div id="jobPanelHistory" class="job-panel-history" style="display:none"></div>
+    </section>
+
+    <!-- Diagram Capture Section with Full Undo / Discard Controls -->
+    <section id="diagramFinderSection" style="display:none; margin: 1.5rem 2rem 0 2rem; background:#1e293b; border:1px solid #334155; padding:1.2rem; border-radius:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+        <h3 style="margin:0; font-size:1.05rem;">📸 Step 2. Diagram Capture — Ordered FIFO Queue</h3>
+        <span id="diagramUploadStatus" style="font-size:0.82rem; color:#a7f3d0; font-weight:600;"></span>
+      </div>
+      
+      <div id="nowCapturingCard" style="display:none; background:#0f172a; border:2px solid #6366f1; border-radius:10px; padding:1rem; margin-bottom:0.75rem; text-align:center;">
+        <div style="font-size:0.75rem; letter-spacing:0.08em; color:#818cf8; font-weight:700;">NOW CAPTURING</div>
+        <div id="nowCapturingProgress" style="font-size:0.85rem; color:#94a3b8; margin:0.2rem 0;">—</div>
+        <div id="nowCapturingLabel" style="font-size:1.25rem; font-weight:800; color:#f1f5f9;">—</div>
+        <div id="nowCapturingHint" style="font-size:0.82rem; color:#cbd5e1; margin-top:0.35rem; font-style:italic;"></div>
+        <div id="nowCapturingName" style="font-size:0.7rem; color:#64748b; margin-top:0.3rem; word-break:break-all;"></div>
+      </div>
+
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; margin-bottom:0.75rem;">
+        <button id="btnToggleWatch" class="btn btn-primary" style="font-size:0.85rem;">▶ Start Auto-Capture</button>
+        <button id="btnUndoCapture" class="btn btn-warning" style="font-size:0.82rem;">↩ Undo Last Screenshot</button>
+        <button id="btnDiscardCapture" class="btn btn-danger" style="font-size:0.82rem;">🗑 Discard Unassigned</button>
+        <input type="file" id="diagramFileInput" multiple accept=".png,.jpg,.jpeg" style="display:none">
+        <button id="btnPickDiagrams" class="btn btn-secondary" style="font-size:0.82rem;">📎 Manual Assign File</button>
+        <span id="watchStatusText" style="font-size:0.78rem; color:#94a3b8; margin-left:auto;"></span>
+      </div>
+
+      <div id="diagramChecklist" style="display:flex; flex-direction:column; gap:0.4rem; max-height:340px; overflow:auto;"></div>
+      <div id="pendingPicker" style="display:none; margin-top:0.5rem; background:#0f172a; border:1px solid #334155; border-radius:6px; padding:0.5rem;"></div>
+      
+      <p style="font-size:0.72rem; color:#64748b; margin:0.6rem 0 0;">Auto-capture watches <code>C:\Users\ralme\OneDrive\Pictures\Screenshots 1</code> and renames each new screenshot to the next expected name in FIFO order. Click "Undo Last" or the individual Undo button on any diagram to rewind.</p>
+    </section>
+
+    <div id="extractionInterstitial" style="display:none; margin:1rem 2rem; background:#0f172a; border:1px solid #334155; padding:0.75rem 1rem; border-radius:8px; font-size:0.85rem; color:#e2e8f0;"></div>
+
+    <main class="main-layout">
+      <section class="sidebar-panel">
+        <div class="panel-card">
+          <h2>1. Ingest Question PDF / Text</h2>
+          <p class="panel-desc">Upload your raw PDF question sets or text files for automated OCR & KaTeX structuring.</p>
+          <label class="upload-zone" id="uploadZone" for="fileInput">
+            <input type="file" id="fileInput" accept=".pdf,.txt" style="display:none">
+            <div class="upload-prompt" id="uploadPrompt">
+              <span class="upload-icon">📄</span>
+              <p><strong>Click to choose questions file</strong> or drag & drop</p>
+              <span class="file-hint">PDF, TXT question sheets</span>
+            </div>
+          </label>
+          <div id="fileSelectedName" class="file-selected-label"></div>
+          <div class="form-group" style="margin-top: 1rem;">
+            <label for="ansFileInput">2. Answer Key / Marking Scheme (Optional):</label>
+            <label class="upload-zone upload-zone-secondary" id="ansUploadZone" for="ansFileInput">
+              <input type="file" id="ansFileInput" accept=".pdf,.txt" style="display:none">
+              <div class="upload-prompt" id="ansUploadPrompt">
+                <span class="upload-icon" style="font-size: 1.3rem;">🔑</span>
+                <p style="font-size: 0.8rem;"><strong>Upload Answer Key</strong></p>
+                <span class="file-hint">PDF, TXT solutions / marking scheme</span>
+              </div>
+            </label>
+            <div id="ansFileSelectedName" class="file-selected-label"></div>
+          </div>
+          <div class="form-group">
+            <label for="providerSelect">AI Extraction Engine:</label>
+            <select id="providerSelect" class="input-select">
+              <option value="auto">Auto (Balanced DB Pool)</option>
+            </select>
+          </div>
+          <button id="btnStartExtraction" class="btn btn-primary btn-block" disabled>⚡ Start Parallel Extraction & Structuring</button>
+        </div>
+        <div class="panel-card">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+            <h3 style="margin:0;">Recent Jobs</h3>
+            <button id="btnClearJobs" class="btn-text-danger" style="font-size:0.75rem;">Clear History</button>
+          </div>
+          <div id="jobsList" class="jobs-list"><p class="empty-state">No jobs executed yet.</p></div>
+        </div>
+      </section>
+      <section class="content-panel">
+        <div class="panel-header">
+          <div>
+            <h2>Extracted Questions Review</h2>
+            <span id="questionCountBadge" class="count-badge">0 Questions</span>
+          </div>
+          <div class="filter-group">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="needs_review">⚠️ Needs Review</button>
+            <button class="filter-btn" data-filter="human_review">🧑 Human Review</button>
+            <button class="filter-btn" data-filter="valid">✅ Valid KaTeX</button>
+            <button class="filter-btn" data-filter="recheck_passed">🔍 Fully Verified</button>
+          </div>
+        </div>
+        <div id="paginationTop" class="pagination-bar" style="display:none;"></div>
+        <div id="questionsContainer" class="questions-grid">
+          <div class="empty-state-large">
+            <span class="empty-icon">📚</span>
+            <h3>No extracted questions yet</h3>
+            <p>Upload a question PDF or text document on the left to begin parallel multi-account extraction.</p>
+          </div>
+        </div>
+        <div id="paginationBottom" class="pagination-bar" style="display:none;"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="editModal" class="modal-backdrop" style="display:none">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Edit Extracted Question</h3>
+        <button id="btnModalClose" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editQuestionId">
+        <div class="form-group">
+          <label>Question Stem (KaTeX):</label>
+          <textarea id="editStemInput" class="input-textarea" rows="4"></textarea>
+          <div id="editStemPreview" class="katex-preview-box"></div>
+        </div>
+        <div class="form-group">
+          <label>Choices:</label>
+          <div class="choices-edit-grid">
+            <div class="choice-edit-item"><span>(A)</span><input type="text" id="editChoice0" class="input-text"></div>
+            <div class="choice-edit-item"><span>(B)</span><input type="text" id="editChoice1" class="input-text"></div>
+            <div class="choice-edit-item"><span>(C)</span><input type="text" id="editChoice2" class="input-text"></div>
+            <div class="choice-edit-item"><span>(D)</span><input type="text" id="editChoice3" class="input-text"></div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Correct Choice Index (0=A, 1=B, 2=C, 3=D):</label>
+          <select id="editCorrectIndex" class="input-select">
+            <option value="">Unknown</option><option value="0">(A)</option><option value="1">(B)</option><option value="2">(C)</option><option value="3">(D)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Diagram Description (Verbatim):</label>
+          <textarea id="editDiagramDesc" class="input-textarea" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnCancelEdit" class="btn btn-secondary">Cancel</button>
+        <button id="btnSaveEdit" class="btn btn-primary">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="profilesModal" class="modal-backdrop" style="display:none">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Google NotebookLM Accounts Pool (DB-Balanced)</h3>
+        <button id="btnProfilesModalClose" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="panel-desc">Manage authentication state, SQLite usage counts, and automatic rate-limit cooldowns across your Google profiles.</p>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:0.5rem;">
+          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.8rem;color:#9ca3af;cursor:pointer;"><input type="checkbox" id="selectAllProfiles" style="accent-color:#6366f1;width:14px;height:14px;"> All</label>
+            <button id="btnSyncAllAccounts" class="btn btn-primary" style="font-size:0.82rem;padding:0.35rem 0.7rem;">🔄 Sync All</button>
+            <button id="btnLoginSelected" class="btn btn-secondary" style="font-size:0.82rem;padding:0.35rem 0.7rem;">🔑 Login Selected</button>
+            <button id="btnClearAllRateLimits" class="btn btn-secondary" style="font-size:0.82rem;padding:0.35rem 0.7rem;color:#fbbf24;" title="Unblock all rate-limited accounts">⚡ Clear Limits</button>
+            <button id="btnCleanNotebooks" class="btn btn-secondary" style="font-size:0.82rem;padding:0.35rem 0.7rem;">🧹 Clean Notebooks</button>
+            <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;color:#9ca3af;margin-left:0.25rem;" title="Timeout in seconds per account when auto-logging in">
+              Timeout: <input type="number" id="syncTimeoutInput" value="5" min="2" max="60" style="width:48px;padding:0.2rem 0.4rem;background:#1e293b;border:1px solid #334155;color:#f8fafc;border-radius:4px;font-size:0.8rem;text-align:center;">s
+            </label>
+          </div>
+          <div style="display:flex; gap:0.5rem; align-items:center;">
+            <input type="text" id="newProfileNameInput" placeholder="Profile name (e.g. slave4)" class="input-text" style="width:190px; padding:0.35rem 0.6rem;font-size:0.82rem;">
+            <button id="btnLoginNewProfile" class="btn btn-secondary" style="font-size:0.82rem;padding:0.35rem 0.7rem;">➕ Add Account</button>
+          </div>
+        </div>
+        <div id="profilesListContainer" style="display:flex; flex-direction:column; gap:0.5rem;"><p class="empty-state">Loading profiles...</p></div>
+      </div>
+      <div class="modal-footer"><button id="btnCloseProfilesModal" class="btn btn-secondary">Close</button></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

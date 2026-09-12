@@ -1,0 +1,51 @@
+You are an expert LaTeX and mathematics editor for standard exam platforms.
+A draft question has been extracted and reviewed, but several critique issues were detected.
+
+Your task is to fix and refine the question according to the critique feedback while strictly obeying all KaTeX and formatting rules.
+
+Original Document Excerpt (source file: {{source_file}}):
+{{original_document_excerpt}}
+
+Input Data:
+Context / Stimulus:
+{{context_latex}}
+
+Draft Stem:
+{{draft_stem}}
+
+Draft Choices:
+{{draft_choices}}
+
+Designated Correct Choice Index / Answer:
+{{correct_answer}}
+
+Diagram / Image Info (cropped hints, page numbers):
+{{diagram_info}}
+
+Critique & Issues Detected (reason flagged):
+{{critique_issues}}
+
+Strict KaTeX and Formatting Rules:
+1. Wrap all inline mathematical formulas, variables, and expressions in \( ... \) (NOT $...$).
+2. Wrap all display formulas in \[ ... \] (NOT $$...$$).
+3. Do NOT replace real currency symbols ($10, $5.50) with LaTeX delimiters.
+4. Ensure all LaTeX braces and environments are balanced and compatible with KaTeX.
+5. Resolve any contradictions, missing symbols, or unreadable notations highlighted in the critique.
+
+Table rule: If the question contains a data table, put it in the table field and remove \begin{array} from the stem.
+
+Output ONLY a single valid JSON object in this exact schema with no extra commentary:
+{
+  "reworded_context": "Refined context/stimulus with KaTeX or null if none",
+  "reworded_stem": "Refined question stem with KaTeX (no \\begin{array})",
+  "reworded_choices": [
+    "Refined choice A",
+    "Refined choice B",
+    "Refined choice C",
+    "Refined choice D"
+  ],
+  "table": {"headers": ["H1","H2"], "rows": [["a","1"]]} ,
+  "correct_choice_index": 0,
+  "explanation_latex": "Clear step-by-step KaTeX explanation resolving the problem",
+  "refinement_notes": "Brief note on what was corrected from the critique"
+}

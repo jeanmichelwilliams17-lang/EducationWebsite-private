@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExtractedQuestion",
+  "description": "Structured format for extracted, validated, and reworded exam questions.",
+  "type": "object",
+  "required": [
+    "id",
+    "source_type",
+    "raw_stem",
+    "reworded_stem",
+    "choices",
+    "needs_human_review",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique UUID for the extracted question"
+    },
+    "group_id": {
+      "type": ["string", "null"],
+      "description": "Group UUID linking sub-questions that share a parent context or diagram"
+    },
+    "label_path": {
+      "type": "string",
+      "description": "Hierarchical question label path (e.g. '1', '1(a)', '1(a)(i)', '1(a)(ii)(A)')"
+    },
+    "part_order": {
+      "type": "integer",
+      "description": "1-based order for rendering sub-questions sequentially"
+    },
+    "source_type": {
+      "type": "string",
+      "enum": ["own_pdf", "ai_generated", "raw_ocr"],
+      "description": "Source origin of the question"
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Origin PDF or image filename"
+    },
+    "context_latex": {
+      "type": ["string", "null"],
+      "description": "Shared stimulus/passage or problem context for multi-part questions"
+    },
+    "raw_stem": {
+      "type": "string",
+      "description": "Raw transcribed stem from OCR"
+    },
+    "reworded_stem": {
+      "type": "string",
+      "description": "Cleaned KaTeX-compliant question stem"
+    },
+    "choices": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 0,
+      "maxItems": 4,
+      "description": "Array of 4 answer choices formatted in KaTeX"
+    },
+    "correct_choice_index": {
+      "type": ["integer", "null"],
+      "description": "0-based index of the correct answer, if known"
+    },
+    "diagram_description": {
+      "type": ["string", "null"],
+      "description": "Dense verbal description of any figure/diagram"
+    },
+    "diagram_type": {
+      "type": ["string", "null"],
+      "description": "Type of diagram (e.g. geometry, coordinate graph)"
+    },
+    "validation_status": {
+      "type": "string",
+      "enum": ["valid", "flagged_katex", "needs_review"],
+      "description": "KaTeX and delimiter validation outcome"
+    },
+    "validation_errors": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "needs_human_review": {
+      "type": "boolean",
+      "description": "True if OCR was garbled, math failed validation, or AI flagged an error"
+    },
+    "extraction_notes": {
+      "type": "string",
+      "description": "Notes from the structuring or OCR step"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+SYSTEM:
+You resolve an answer mismatch for a single question. You are given the bundle plus both prior derivations and the mismatch reason. Determine the correct choice and provide the resolved explanation.
+
+Rules:
+- Use PDF + images + question data, not just prior text.
+- Weigh both derivations, correct any arithmetic/logic error.
+- LaTeX: \( ... \) inline, \[ ... \] display.
+
+USER:
+Question bundle:
+{{bundle_json}}
+
+Prior solve: correct_choice_index={{solve_index}}, explanation={{solve_explanation}}
+Independent validation: verified_correct_choice_index={{validate_index}}, solution={{validate_solution}}
+Mismatch reason: {{mismatch_reason}}
+Flag reason (if any): {{flag_reason}}
+
+Return ONLY JSON:
+{
+  "correct_choice_index": 0,
+  "explanation_latex": "resolved KaTeX explanation",
+  "resolution_note": "brief note on which derivation was correct and why"
+}

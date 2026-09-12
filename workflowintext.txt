@@ -1,0 +1,284 @@
+# Extraction Chatter — Workflow Plan
+
+## 1. UUID hierarchy
+
+Every job has a UUID. Every question has a UUID. If a question has subparts, each
+subpart gets its own UUID plus an order number.
+
+- Job UUID → Question UUID → Subpart UUID(s)
+- A question with 2 subparts gets 2 subpart UUIDs, each linking back to the
+  question UUID, each with an order number (1st subpart, 2nd subpart, etc.)
+- The question UUID links back to the job UUID.
+
+## 2. Extraction (extraction chatter)
+
+Extract from the PDF: question info, question number, and diagram hints.
+
+For every diagram (question diagram or answer diagram), generate its expected
+image name using:
+
+```
+jobuuid_questionuuid_subpartuuid(if any)_[question|A|B|C|D]_[order]
+```
+
+- If it's an **answer diagram**, use the choice letter (A–D) in place of `[order]`.
+- If it's a **question diagram**, use a number demarcating which one it is
+  (a question can have more than one question diagram — 1, 2, ...).
+
+This produces the **expected_diagrams** list for the job: one entry per diagram,
+each carrying `question_number`, `label_path`, `part`, `order`, `page`, `hint`,
+and `expected_name`. This list is the single source of truth for step 3.
+
+**Tilde-format parsing (dual-mode):**
+
+The extraction prompt requests `~~~` (triple-tilde) separated key-value fields
+(e.g. `~~~~~L: 1~~~T: Multiple Choice~~~Q: ...~~~~~`). However, the LLM
+sometimes returns a simplified **single-tilde positional** format instead
+(e.g. `~~~~~1~Multiple Choice~...~~~~~`). The parser (`parse_tilde_lines`)
+auto-detects which format was used:
+
+- If splitting on `~~~` yields multiple keyed tokens → standard key-value parse.
+- If splitting on `~~~` yields ≤ 2 tokens but splitting on single `~` yields ≥ 7
+  → positional parse, mapping fields by index:
+  `[0] L, [1] T, [2] Q, [3] A, [4] B, [5] C, [6] D, [7] (unused), [8] DPG, [9] DH, [10] DC, [11] (unused), [12] DG`.
+
+Both paths feed into the same downstream field-extraction logic.
+
+## 3. Diagram capture (auto-watch + auto-label)
+
+A human takes the screenshots. The system does the naming and tracking — the
+human never has to know or type a filename.
+
+**How it works:**
+
+- The `expected_diagrams` list from step 2 is treated as an **ordered queue**,
+  in the order the diagrams appear in the PDF (question diagrams before their
+  answer diagrams, in page order). Each entry starts `fulfilled: false`.
+- The app watches the OS folder the human's screenshot tool saves into (e.g.
+  `Pictures\Screenshots`), the same way the existing screenshot-organizer tool
+  does: poll the folder every ~1s, and once a file's size stops changing
+  between polls, treat the write as finished and pick it up.
+- On pickup, the file is renamed to the **current head of the queue's**
+  `expected_name`, moved into the job's diagram folder, and that entry is
+  marked `fulfilled: true`. The pointer advances to the next un-fulfilled entry.
+- **"Now capturing" panel:** before the human switches to their PDF viewer to
+  snip, the app shows — big and hard to miss — exactly what should be
+  screenshotted next: question number, subpart, question/answer + order/letter,
+  page number, and the hint text itself. This is what stops the human
+  accidentally screenshotting the wrong diagram. The panel updates to the next
+  item the instant a capture is auto-matched, with no action required from the
+  human.
+- **Undo / discard:** capture order is enforced strictly (FIFO) rather than
+  verified by content, since verifying a screenshot actually matches its hint
+  would need a vision-model call per capture. To keep mistakes cheap instead:
+  - **Undo last capture** — un-renames the most recent file and rewinds the
+    queue pointer by one, for when the human snipped the wrong thing and it
+    got labeled as something else.
+  - **Discard last capture** — deletes an accidental/test screenshot without
+    touching the queue pointer at all.
+- **Manual fallback:** a manual "Select Images" upload stays available for
+  cases auto-detection misses or gets confused by. Manually selected files are
+  assigned to the current queue head, same as an auto-detected capture.
+- **Auto-completion:** once every entry is `fulfilled`, the watcher stops
+  itself and the job's status flips straight to "diagrams uploaded" — no extra
+  click needed before moving to step 4.
+- If a question has **zero diagrams**, it's simply absent from the queue; if
+  the whole job has no diagrams at all, step 3 is skipped entirely and the job
+  goes straight to "ready to reword."
+
+## 4. Bundling & rewording (parallel, multi-account)
+
+Once diagrams are captured, each question is bundled and sent to a
+NotebookLM account for rewording. Each bundle includes:
+
+- The original whole PDF (attached once per chat).
+- The images for that question, if any.
+- The diagram hint text.
+- The question text, number, and everything originally extracted for it.
+
+Target ~10 questions per chat/notebook. Different chunks of ~10 are sent to
+different accounts in parallel (dynamically assigned from whichever accounts
+are authenticated and not on cooldown, rather than a fixed 0–10 / 11–20 split —
+this adapts automatically if an account is rate-limited).
+
+Rewording is scoped to wording, grammar, and KaTeX/notation cleanup only. It
+does **not** determine or preserve a correct answer — answer-generation is
+its own pipeline (steps 5–8 below), regardless of whether the source document
+happened to include a marking scheme.
+
+Anything that fails KaTeX/notation validation is flagged, with a reason, and
+follows its own flag → fix → recheck loop (steps 9–10).
+
+## 5. Solve pass (parallel, multi-account — every question)
+
+Once a question is reworded, it's bundled and sent to a NotebookLM account to
+be solved from scratch, exactly like a student would — regardless of whether
+the source document had a visible marking scheme. This runs on **every**
+question, not just ones missing an answer. Each bundle includes:
+
+- The original whole PDF (attached once per chat).
+- The images for that question, if any.
+- The question text, number, choices, and everything extracted/reworded for it.
+
+Batched and distributed across accounts the same way as step 4. Output per
+question: `correct_choice_index` and a full step-by-step `explanation_latex`.
+
+## 6. Answer validation pass (parallel, multi-account — every question)
+
+Every solved question is independently re-checked by a **different** batch/
+chat than the one that solved it (so it isn't just re-reading its own answer
+back). This also runs on every question, not only ones that failed something
+else. Each bundle includes the same inputs as step 5:
+
+- The original whole PDF (attached once per chat).
+- The images for that question, if any.
+- The question text, number, choices, and everything extracted/reworded for
+  it.
+
+The validator re-derives the answer independently from the stem/choices alone
+(it is not shown the Solve-stage answer, to avoid anchoring on it), then
+compares its own result against the Solve-stage output.
+
+- If they agree → the question is marked answer-verified, done.
+- If they disagree, or the validator can't find a matching choice → the
+  question is flagged, with a reason describing the mismatch (e.g. "Solve
+  stage said index 2, independent derivation gives index 1: ...").
+
+## 7. Answer fix pass (flagged answer mismatches only)
+
+Questions flagged in step 6 are sent, in batches of 5, to another notebook to
+resolve the mismatch — similar in shape to the wording-refine pass, but for
+answer correctness. Each bundle includes:
+
+- The original whole PDF.
+- The images for that question, if any.
+- The question text, number, choices, and everything extracted/reworded for
+  it.
+- The reason it was flagged (both derivations from step 6, so the fixer can
+  see exactly where they diverged).
+
+Output: a resolved `correct_choice_index` and `explanation_latex`, plus a
+short note on which derivation was right and why.
+
+## 8. Answer recheck pass (previously-flagged answers only)
+
+The fixed answers from step 7 go through independent validation again — same
+process as step 6, scoped to only the previously-flagged questions. Each
+bundle includes the same full context as step 7:
+
+- The original whole PDF.
+- The images for that question, if any.
+- The question text, number, choices, and everything extracted/reworded for
+  it.
+- The reason it was originally flagged.
+
+- If the recheck now agrees with the fix → done, marked answer-verified.
+- If it's flagged again on this second pass → it goes to the **human review
+  queue** instead of being auto-retried further.
+
+## 9. Wording/KaTeX recheck pass (flagged notation issues only)
+
+Questions that failed KaTeX/notation validation (step 4) are sent, in
+batches of 5, to another notebook for rechecking — along with the original
+whole PDF, the question's images (if any), the hint, the question text/
+number, everything originally extracted, **and** the reason it was flagged.
+This notebook tries to fix the notation issue. This loop is independent of
+the answer-correctness loop (steps 5–8) — a question can be flagged, fixed,
+and rechecked on wording and on answer-correctness separately and in
+parallel.
+
+## 10. Wording/KaTeX second validation pass
+
+The fixed questions from step 9 go through KaTeX validation again (same as
+step 4, but scoped to only the previously-flagged questions).
+
+- If a question now passes → done, marked valid.
+- If a question is flagged again on this second pass → it goes to the
+  **human review queue** instead of being auto-retried further.
+
+## 11. Diagram Code Regeneration pass (parallel, multi-account — 1 chat per diagram)
+
+Captured screenshots often do not look perfect: many have watermarks, scan artifacts,
+low contrast, blurriness, or poor cropping. To provide publication-quality visuals,
+every question that has a diagram is sent back to NotebookLM to be remade into clean,
+reproducible code.
+
+**Chat Scope & Inputs:**
+- Processed individually in its own prompt / chat (1 chat per diagram, distributed across
+  the account pool in parallel).
+- **No need to send the entire original PDF**: only the individual question stem, choices,
+  explanation / answer key, any accompanying hints, and the captured screenshot image are attached.
+
+**Code Format Selection:**
+NotebookLM analyzes the screenshot and automatically chooses the best code format:
+- **Matplotlib**: Ideal for coordinate plane graphs, function plots, scatter plots,
+  bar charts, histograms, physics kinematics/force curves.
+- **Mermaid**: Ideal for flowcharts, decision trees, sequence diagrams, state machines,
+  algorithm pathways.
+- **SVG**: Ideal for geometric figures (triangles, angles, circles, polygons, parallel lines),
+  Venn diagrams, scientific apparatus, physical illustrations of objects.
+
+**Local Processing:**
+The returned code is sanitized and rendered locally into a crisp, high-resolution PNG:
+- Matplotlib code runs in a sandboxed Python subprocess (`Agg` backend at 200 DPI).
+- Mermaid and SVG code are rendered via Playwright headless Chromium for pixel-perfect anti-aliased vectors.
+
+## 12. Diagram Validation pass (parallel, multi-account — 1 chat per diagram)
+
+Once rendered, the diagram is validated to ensure complete mathematical and scientific fidelity.
+
+**Chat Scope & Inputs:**
+- 1 chat per diagram.
+- Sends the **original captured screenshot** AND the **newly rendered screenshot** together.
+- Accompanied by the question text, choices, and solution info.
+- NotebookLM is asked to compare the two diagrams directly in the context of the question:
+  - Are all numerical values, coordinates, units, formulas, and labels preserved?
+  - Are geometric angles, directions, intersections, and proportions faithful?
+  - Can a student looking at ONLY the newly rendered diagram answer the question correctly?
+
+**Outcomes:**
+- **Pass** → `diagram_status: "regenerated"`. The new clean PNG replaces the original screenshot
+  as the primary diagram file for export and display.
+- **Fail** → flagged with specific `missing_elements`, `distorted_elements`, and `fix_instructions`
+  for Step 13.
+
+## 13. Diagram Fix & Recheck loop (flagged diagrams only)
+
+Diagrams that failed initial validation undergo an automated correction cycle:
+- Sent to NotebookLM with the original screenshot, the previously generated code,
+  and the validation critique / fix instructions.
+- NotebookLM produces corrected code.
+- The revised code is re-rendered locally.
+- A second validation check is run against the original screenshot.
+  - If it passes → marked `diagram_status: "regenerated"`.
+  - If it fails again → marked `diagram_status: "human_review"`. The original screenshot
+    is preserved as the active diagram file so no data is ever lost or missing.
+
+## 14. Completion & Final Export
+
+A question is considered fully done only once it has cleared all stages of the pipeline:
+1. **Wording & KaTeX normalization** (steps 4, 9, 10).
+2. **Answer verification from first principles** (steps 5, 6, 7, 8).
+3. **Diagram regeneration & validation** (steps 11, 12, 13).
+
+If all stages pass cleanly:
+- `final_status: "auto_valid"`, `needs_human_review: false`.
+- Exported to `output/{job_id}_final.json`.
+
+If any stage flags an issue that could not be resolved automatically (or landed in `human_review`):
+- `final_status: "needs_human"`, `needs_human_review: true`.
+- Exported to `output/{job_id}_human_review.json` for rapid teacher/human inspection.
+- The pipeline progress reaches 100% and displays the final summary.
+
+### Human Review UI Controls:
+1. **Question Type Badge**: Each question clearly displays its question type (`📋 Multiple Choice` vs `📋 Structured / Theory`) on the top header.
+2. **Explicit Review Reason Banner**: Displays the exact reasons why human review is requested:
+   - **Diagram Failure**: Specific missing/distorted elements and fix instructions from the validation vision-pass.
+   - **Answer Mismatch**: Discrepancy between solve-stage derivation and independent validation derivation.
+   - **KaTeX Errors**: Disallowed or malformed notation strings.
+   - **Open-Ended Theory**: Open-ended structured problem requiring human confirmation.
+3. **Interactive Diagram Controls**:
+   - **Toggle Diagram Source**: One-click switch between the original snipped screenshot and the cleaned vector diagram (`POST /api/diagram/toggle/<qid>`).
+   - **Rerun Diagram Fix**: Re-executes Step 13 on that individual diagram on demand (`POST /api/diagram/fix/<qid>`).
+4. **One-Click Approval**: A green "Approve Question" button (`POST /api/questions/<qid>/approve`) that clears the review flag, marks the question verified, and automatically syncs `{job_id}_final.json` and `{job_id}_human_review.json`.
+5. **Fast Paginated Review**: Questions are paginated (default 10 per page, selectable 10/20/50/All) with dual top and bottom navigation controls. KaTeX math rendering is scoped only to the active page, eliminating UI thread blocking and lag across large question sets (60+ questions).

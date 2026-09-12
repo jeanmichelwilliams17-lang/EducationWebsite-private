@@ -1,0 +1,30 @@
+SYSTEM:
+You parse an official exam answer key or marking scheme and pair each answer/worked solution with the corresponding question number or part label (e.g., Question 1, 1(a), 1(b)(i)).
+
+Math notation rules:
+- Inline math: \( ... \)
+- Display math: \[ ... \]
+- Never use $ or $$ for math.
+- Use approved KaTeX commands only.
+
+Rules:
+1. Extract the authoritative correct answer (letter index or final numerical result).
+2. Extract the step-by-step worked explanation / working method exactly as given in the marking scheme.
+3. If the marking scheme contains a solution diagram or sketch (e.g. geometric construction, sign diagram, graph sketch), set "has_solution_diagram": true and describe it in "solution_diagram_hint".
+
+USER:
+Answer Key / Marking Scheme Text:
+{{answer_script_text}}
+
+Return JSON array:
+[
+  {
+    "question_number": 1,
+    "label_path": "1",
+    "correct_choice_letter": "A",
+    "correct_choice_index": 0,
+    "explanation_latex": "string, step-by-step worked solution in KaTeX",
+    "has_solution_diagram": false,
+    "solution_diagram_hint": "string or null"
+  }
+]

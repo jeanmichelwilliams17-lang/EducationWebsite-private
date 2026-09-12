@@ -1,0 +1,119 @@
+# Fix & Redesign Plan
+
+## Part 1 — Backend architecture fixes (in priority order)
+
+### Phase 1: Make long-running steps non-blocking (fixes #1, #4, #5 — the root cause)
+
+This unblocks everything else, so it goes first.
+
+1. **Wrap extraction, reword, and recheck in background threads**, mirroring the pattern already used for `run_sync()` and the diagram watcher:
+   ```python
+   @app.route("/api/extract", methods=["POST"])
+   def extract_compat():
+       job_id = uuid.uuid4().hex[:8]
+       JOBS[job_id] = {"status": "extracting", ...}
+       threading.Thread(target=_run_extraction_job, args=(job_id, ...), daemon=True).start()
+       return jsonify({"ok": True, "job_id": job_id})   # returns immediately
+   ```
+   The actual `asyncio.run(do_extract())` moves into `_run_extraction_job`, running on its own thread.
+
+2. **Enable `threaded=True`** on `app.run(...)` so the server can serve `/api/telemetry`, `/api/diagram_watch/status`, etc. concurrently with a background job — this alone fixes "nothing updates while a job runs."
+
+3. **Wire telemetry into extraction, not just reword:**
+   ```python
+   telemetry.start_job(job_id, filename, total_questions=0)   # total unknown yet
+   telemetry.set_stage("ocr_crop", "Extracting questions from PDF")
+   ...
+   telemetry.finish_job("completed", f"Extracted {len(qs)} questions")
+   ```
+   Call `telemetry.finish_job(...)` at the end of **every** step (extract, reword, recheck) — it currently isn't called anywhere, which is why `stage` never legitimately reaches `"completed"`.
+
+4. **Add a poll-friendly job-status endpoint** that returns just the step + percentage, decoupled from the "questions reworded" telemetry object, so extraction (which has no batches/accounts) still reports *something* meaningful (e.g. page N of M being OCR'd).
+
+### Phase 2: Account picker for extraction (fixes #3)
+
+1. Replace the static 4-option `providerSelect` with one populated live from `GET /api/profiles`:
+   ```js
+   const profiles = await fetch('/api/profiles').then(r=>r.json());
+   providerSelect.innerHTML = profiles.profiles
+     .filter(p => p.authenticated && !p.disabled)
+     .map(p => `<option value="${p.name}">${p.name} (${p.email})</option>`).join('');
+   ```
+2. On the backend, stop remapping every choice to `"Slave 9"` — pass the literal selected profile straight through in `/api/start` and `/api/extract`, only falling back to auto-pick if the field is empty or the chosen profile is unavailable.
+3. Keep "Auto (let the pool decide)" as one explicit option rather than the default silent behavior.
+
+### Phase 3: Reload resilience (fixes #2)
+
+1. Persist `activeJobId` to `localStorage` whenever it's set; restore it on `DOMContentLoaded` and re-hydrate `expectedDiagrams`/watch state from `GET /api/status/<job_id>`.
+2. Make each row in "Recent Jobs" clickable → sets `activeJobId`, re-fetches status, and re-renders whichever panel matches that job's current step (stepper, diagram finder, or telemetry).
+3. (Separate, lower priority) since `JOBS` is an in-memory dict, a real server restart still loses everything — if that matters, persist `JOBS` to a local SQLite file or JSON snapshot on each state change. Flag as future work, not blocking.
+
+### Phase 4: Step-transition UX (fixes #4, UI half)
+
+1. On successful extraction, `scrollIntoView({behavior:'smooth'})` the diagram section and give it a brief highlight animation (border flash).
+2. Replace the generic telemetry banner label with a step-specific one so "Extraction Completed" can't be confused with "Reword Completed" (see Part 2 for the actual fix to this).
+3. Add an explicit interstitial message: *"✅ 61 questions extracted — N diagrams need to be captured before rewording can start."* (or *"No diagrams needed — ready to reword"* if `expected_diagrams` is empty).
+
+---
+
+## Part 2 — General UI/layout redesign
+
+### What's actually wrong with the current layout
+
+- **One telemetry banner is overloaded** to represent 4 unrelated pipeline stages (extract/diagrams/reword/recheck) using the same `stage` field and the same "Extraction..." labels — so it's structurally impossible to tell which step you're actually looking at.
+- **Two separate "progress" widgets** (`#jobStepper` and `#telemetrySection`) show overlapping info with no visual link between them — they read as two different features, not one pipeline.
+- **The diagram-capture section is a third, disconnected block** below those two, so the page reads as three stacked, loosely-related panels rather than one continuous job flow.
+- **No single "where am I in this job" anchor** — a user has to mentally reconcile 3 widgets to know the actual state.
+
+### Proposed structure: one persistent Job Panel, not three
+
+Replace `#jobStepper` + `#telemetrySection` + `#diagramFinderSection` header with a single collapsible **Job Panel** that stays mounted for the life of the job and swaps its *body* based on current step, while the *header* (stepper + timer + account strip) never changes shape or moves:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ JOB PANEL (persistent, collapsible)                          │
+│ ┌───────────────────────────────────────────────────────┐   │
+│ │ 📄 sat_practice_4.pdf          ⏱ 42s        [▾ collapse]│   │
+│ │ ● Extract ──● Diagrams ──○ Reword ──○ Recheck            │   │
+│ │ [████████░░░░░░░░░] 61/61 questions · 100%               │   │
+│ │ Accounts: [Slave 9 ●busy] [Slave 3 idle] [Slave 7 cooldown]│  │
+│ └───────────────────────────────────────────────────────┘   │
+│                                                                │
+│  BODY (swaps per step, same container, no page jump):        │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  Step 2 body: "🎯 Now Capturing" + queue checklist       │  │
+│  │  Step 3 body: batch/account activity ticker              │  │
+│  │  Step 4 body: recheck batch progress                     │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Key changes vs. today:
+
+1. **Stage labels become step-specific, not shared.** Each step keeps its own label map instead of reusing `{'completed': '✅ Extraction Completed'}` for every stage:
+   ```js
+   const STEP_LABELS = {
+     extract:  { running: '⚙️ Extracting from PDF',        done: '✅ Extraction Complete' },
+     diagrams: { running: '📸 Capturing Diagrams',          done: '✅ All Diagrams Captured' },
+     reword:   { running: '⚡ Rewording (parallel accounts)',done: '✅ Rewording Complete' },
+     recheck:  { running: '🔍 Rechecking Flagged Items',     done: '✅ Recheck Complete' },
+   };
+   ```
+   This alone kills the "why does it say Extraction Completed when I'm rewording" confusion.
+
+2. **The stepper dots become clickable/jump-to nav**, not just decoration — clicking "Diagrams" while on "Reword" scrolls the body back to that step's last-known state (read-only if already past it).
+
+3. **Transition is a state change inside the same panel, not a new section appearing below.** Instead of `diagramFinderSection` popping into existence as a separate block, its content becomes the panel body when `job.status` enters the diagrams step. No new DOM section, no scroll-hunting — the user is already looking at the panel and its content just changes.
+
+4. **Collapse, don't disappear.** Once a step finishes, its summary collapses into a single line in the stepper header (e.g. "✅ Extract · 61 questions · 8s") rather than vanishing — so scrolling back up always shows a full audit trail of the job, addressing the "click into it if I want to see where the job is" ask directly.
+
+5. **Sidebar becomes job-oriented, not upload-oriented.** Right now "Recent Jobs" is a dead list under the upload form. Move it to a slim persistent left rail: clicking any job (running or finished) loads it into the Job Panel — this is what makes reload-recovery (Phase 3) and "peek at a job without losing my place" actually usable.
+
+### Rollout order
+
+1. Phase 1 (threading/telemetry) first — nothing else matters if the UI can't get live data.
+2. Merge `jobStepper` + `telemetrySection` into the single Job Panel skeleton (step-specific labels, collapsible history).
+3. Fold diagram-capture UI into the panel body instead of a separate section.
+4. Add account picker + reload persistence + jobs-list click-to-resume last, since they're additive and don't require restructuring what's already merged.
+
+Want me to start implementing Phase 1 (threading + telemetry wiring) first, since everything else is downstream of it?

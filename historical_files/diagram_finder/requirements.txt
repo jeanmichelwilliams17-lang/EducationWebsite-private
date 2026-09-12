@@ -1,0 +1,4 @@
+flask>=2.3.0
+werkzeug>=2.3.0
+httpx>=0.24.0
+pypdf>=3.0.0
